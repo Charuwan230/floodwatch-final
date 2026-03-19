@@ -23,6 +23,8 @@ app.use(cors({
     'http://localhost:5174',
     'https://floodwatch-web-production-ffc8.up.railway.app',
     'https://floodwatch-web-production.up.railway.app',
+    'https://floodwatch-web-lac.vercel.app',
+    'https://floodwatch-web-git-main-charuwan230s-projects.vercel.app',
   ],
   credentials: true,
 }));
