@@ -1,19 +1,21 @@
-// backend/src/routes/alert.js
 const express   = require('express');
 const router    = express.Router();
 const auth      = require('../middleware/auth');
 const User      = require('../models/User');
 const FloodData = require('../models/FloodData');
 const { sendPendingAlerts } = require('../services/notificationService');
-const fetch = require('node-fetch');
+const fetch     = require('node-fetch');
 
+// ── VAPID KEY ───────────────────────────────────────────────
 router.get('/vapid-key', (_, res) => {
   res.json({ publicKey: process.env.VAPID_PUBLIC_KEY || '' });
 });
 
+// ── SUBSCRIBE PUSH ──────────────────────────────────────────
 router.post('/subscribe', auth, async (req, res) => {
   try {
     const { subscription, fcmToken } = req.body;
+
     await User.findOneAndUpdate(
       { uid: req.user.uid },
       {
@@ -23,13 +25,14 @@ router.post('/subscribe', auth, async (req, res) => {
       },
       { upsert: true }
     );
+
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// ── ทดสอบส่ง notification จริง ────────────────────────────
+// ── TEST NOTIFICATION ───────────────────────────────────────
 router.post('/test', async (req, res) => {
   try {
     await sendPendingAlerts(true);
@@ -39,11 +42,10 @@ router.post('/test', async (req, res) => {
   }
 });
 
-// ── จำลองน้ำท่วมอำเภอที่ระบุ ─────────────────────────────
+// ── SIMULATE FLOOD ──────────────────────────────────────────
 router.post('/simulate', async (req, res) => {
   try {
     const { districtId, status } = req.body;
-    // status: 'flood' | 'risk' | 'safe'
 
     const DISTRICTS = {
       mueang:      { name: 'เมืองชลบุรี',  lat: 13.3611, lng: 100.9847 },
@@ -65,13 +67,11 @@ router.post('/simulate', async (req, res) => {
     const waterLevel = status === 'flood' ? 95 : status === 'risk' ? 65 : 10;
     const rainfall   = status === 'flood' ? 45 : status === 'risk' ? 20 : 2;
 
-    // ดึงสถานะเดิม
     const prev = await FloodData
       .findOne({ districtId })
       .sort({ fetchedAt: -1 })
       .select('status');
 
-    // บันทึกสถานะใหม่
     await FloodData.create({
       districtId,
       districtName: d.name,
@@ -86,29 +86,32 @@ router.post('/simulate', async (req, res) => {
       fetchedAt:    new Date(),
     });
 
-    // ส่ง notification ทันที
     await sendPendingAlerts(false);
 
     res.json({
       success: true,
       message: `จำลอง ${d.name} → ${status} สำเร็จ`,
     });
+
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Line Notify
-// Line Bot (Messaging API)
+// ── LINE PUSH MESSAGE ───────────────────────────────────────
 router.post('/line-bot', async (req, res) => {
   try {
     const { userId, message } = req.body;
     const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
 
-    if (!token) return res.status(500).json({ error: 'LINE_CHANNEL_ACCESS_TOKEN not set' });
+    if (!token) {
+      return res.status(500).json({ error: 'LINE_CHANNEL_ACCESS_TOKEN not set' });
+    }
 
     const targetId = userId || process.env.LINE_USER_ID;
-    if (!targetId) return res.status(400).json({ error: 'userId required' });
+    if (!targetId) {
+      return res.status(400).json({ error: 'userId required' });
+    }
 
     const response = await fetch('https://api.line.me/v2/bot/message/push', {
       method: 'POST',
@@ -119,46 +122,23 @@ router.post('/line-bot', async (req, res) => {
       body: JSON.stringify({
         to: targetId,
         messages: [{
-          type: 'flex',
-          altText: message,
-          contents: {
-            type: 'bubble',
-            styles: {
-              header: { backgroundColor: '#0A0F1E' },
-              body:   { backgroundColor: '#0D1526' },
-            },
-            header: {
-              type: 'box',
-              layout: 'horizontal',
-              contents: [
-                { type:'text', text:'🌊 FLOOD WATCH', color:'#00D4FF',
-                  weight:'bold', size:'md' },
-              ],
-            },
-            body: {
-              type: 'box',
-              layout: 'vertical',
-              spacing: 'sm',
-              contents: [
-                { type:'text', text: message,
-                  color:'#E2E8F0', wrap: true, size:'sm' },
-              ],
-            },
-          },
+          type: 'text',
+          text: message || 'ทดสอบส่งข้อความ'
         }],
       }),
     });
 
-    const data = await response.json();
-    response.ok
-      ? res.json({ success: true })
-      : res.status(400).json({ error: JSON.stringify(data) });
+    const data = await response.text();
+    console.log("LINE PUSH:", data);
+
+    res.json({ success: true });
+
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// ── Line Webhook (รับ User ID อัตโนมัติ) ──────────────────
+// ── LINE WEBHOOK ────────────────────────────────────────────
 router.post('/line-webhook', async (req, res) => {
   console.log("🔥 WEBHOOK HIT");
   console.log("BODY:", JSON.stringify(req.body, null, 2));
@@ -177,6 +157,10 @@ router.post('/line-webhook', async (req, res) => {
       if (event.type === 'follow') {
         console.log("🎯 FOLLOW EVENT");
 
+        // 🔥 DEBUG TOKEN
+        console.log("TOKEN:", process.env.LINE_CHANNEL_ACCESS_TOKEN?.slice(0, 10));
+        console.log("TOKEN LENGTH:", process.env.LINE_CHANNEL_ACCESS_TOKEN?.length);
+
         const response = await fetch('https://api.line.me/v2/bot/message/reply', {
           method: 'POST',
           headers: {
@@ -187,7 +171,7 @@ router.post('/line-webhook', async (req, res) => {
             replyToken: event.replyToken,
             messages: [{
               type: 'text',
-              text: `User ID ของคุณ:\n${userId}`
+              text: `ยินดีต้อนรับ 🎉\n\nUser ID ของคุณ:\n${userId}\n\nนำไปใส่ในเว็บเพื่อรับการแจ้งเตือนได้เลย`
             }]
           })
         });
@@ -198,6 +182,7 @@ router.post('/line-webhook', async (req, res) => {
     }
 
     res.json({ success: true });
+
   } catch (err) {
     console.error('[Webhook ERROR]', err);
     res.status(500).json({ error: err.message });
