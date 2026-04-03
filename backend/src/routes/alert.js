@@ -5,6 +5,7 @@ const auth      = require('../middleware/auth');
 const User      = require('../models/User');
 const FloodData = require('../models/FloodData');
 const { sendPendingAlerts } = require('../services/notificationService');
+const fetch = require('node-fetch');
 
 router.get('/vapid-key', (_, res) => {
   res.json({ publicKey: process.env.VAPID_PUBLIC_KEY || '' });
@@ -159,47 +160,48 @@ router.post('/line-bot', async (req, res) => {
 
 // ── Line Webhook (รับ User ID อัตโนมัติ) ──────────────────
 router.post('/line-webhook', async (req, res) => {
+  console.log("🔥 WEBHOOK HIT");
+  console.log("BODY:", JSON.stringify(req.body, null, 2));
+
   try {
-    const events = req.body.events || []
-    
+    const events = req.body.events || [];
+
     for (const event of events) {
-      const userId = event.source?.userId
-      if (!userId) continue
+      console.log("EVENT:", event.type);
 
-      // บันทึก User ID ลง MongoDB
-      if (event.type === 'follow' || event.type === 'message') {
-        await User.findOneAndUpdate(
-          { lineUserId: userId },
-          { lineUserId: userId, lineRegistered: true },
-          { upsert: true, new: true }
-        )
-        console.log(`[Line] User registered: ${userId}`)
+      const userId = event.source?.userId;
+      console.log("USER ID:", userId);
 
-        // ส่งข้อความต้อนรับ
-        if (event.type === 'follow') {
-          await fetch('https://api.line.me/v2/bot/message/reply', {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${process.env.LINE_CHANNEL_ACCESS_TOKEN}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              replyToken: event.replyToken,
-              messages: [{
-                type: 'text',
-                text: `ยินดีต้อนรับสู่ FloodWatch Chonburi!\n\nระบบจะแจ้งเตือนน้ำท่วมในจังหวัดชลบุรีให้คุณอัตโนมัติ\n\nUser ID ของคุณ:\n${userId}\n\nคัดลอก ID นี้ไปใส่ในเว็บแอพได้เลยครับ`
-              }]
-            })
+      if (!userId) continue;
+
+      if (event.type === 'follow') {
+        console.log("🎯 FOLLOW EVENT");
+
+        const response = await fetch('https://api.line.me/v2/bot/message/reply', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${process.env.LINE_CHANNEL_ACCESS_TOKEN}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            replyToken: event.replyToken,
+            messages: [{
+              type: 'text',
+              text: `User ID ของคุณ:\n${userId}`
+            }]
           })
-        }
+        });
+
+        const data = await response.text();
+        console.log("LINE REPLY:", data);
       }
     }
 
-    res.json({ success: true })
+    res.json({ success: true });
   } catch (err) {
-    console.error('[Webhook]', err.message)
-    res.status(500).json({ error: err.message })
+    console.error('[Webhook ERROR]', err);
+    res.status(500).json({ error: err.message });
   }
-})
+});
 
 module.exports = router;
